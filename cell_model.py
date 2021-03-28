@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 from scipy import interpolate, integrate
@@ -73,8 +74,8 @@ class CellModel:
         self.ocv_lu_table = ocv_lu_table
         self.ocv_lu_table.interpolate()
         self._interpolate_ib()
-        self.sol = None
-        self.Vb = None
+        self.sol: Optional[integrate.OdeResult] = None
+        self.Vb: Optional[np.array] = None
 
     def _interpolate_ib(self) -> None:
         """Interpolate the ib(t) function."""
@@ -105,6 +106,11 @@ class CellModel:
         Voc = self.voc_int(W[0])
 
         return Voc + ib * self.cell_params.Rs + W[1]
+
+    @property
+    def cell_power(self) -> np.array:
+        """Cell output power."""
+        return self.ib * self.Vb
 
     def solve(self, method: str = "DOP853") -> CellModel:
         """Solve for the cell voltage."""
