@@ -50,6 +50,11 @@ class OCVLookupTable:
         self.Voc_int = interpolate.interp1d(
             self.soc, self.Voc, kind="cubic", fill_value="extrapolate"
         )
+        self.integrate = np.vectorize(self._integrate)
+
+    def _integrate(self, soc: float) -> float:
+        """Calculate the integral of Voc(SOC) between 0 and a given SOC."""
+        return integrate.quad(self.Voc_int, 0, soc)[0]
 
 
 class CellModel:
@@ -106,6 +111,16 @@ class CellModel:
         Voc = self.voc_int(W[0])
 
         return Voc + ib * self.cell_params.Rs + W[1]
+
+    @property
+    def soc(self) -> np.array:
+        """Cell SOC(t)."""
+        return self.sol.y[0]
+
+    @property
+    def soe(self) -> np.array:
+        """Cell SOE(t)."""
+        return self.ocv_lu_table.integrate(self.soc) / self.ocv_lu_table.integrate(1)
 
     @property
     def cell_power(self) -> np.array:
