@@ -45,6 +45,14 @@ class OCVLookupTable:
     Voc: np.array  # Open circuit voltages (V)
     soc: np.array  # SOCs (0,1)
 
+    def __post_init__(self) -> None:
+        """Initialize Voc_int."""
+        self.Voc_int: Optional[np.array] = None
+
+    def is_interpolated(self) -> bool:
+        """Tests if the lookup table has already been interpolated."""
+        return self.Voc_int is not None
+
     def interpolate(self) -> None:
         """Interpolate the Voc(SOC) function."""
         self.Voc_int = interpolate.interp1d(
@@ -77,7 +85,8 @@ class CellModel:
         self.soc0 = soc0
         self.cell_params = cell_params
         self.ocv_lu_table = ocv_lu_table
-        self.ocv_lu_table.interpolate()
+        if not self.ocv_lu_table.is_interpolated():
+            self.ocv_lu_table.interpolate()
         self._interpolate_ib()
         self.sol: Optional[integrate.OdeResult] = None
         self.Vb: Optional[np.array] = None
