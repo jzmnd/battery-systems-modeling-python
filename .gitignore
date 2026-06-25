@@ -29,5 +29,8 @@ wheels/
 *.egg
 .ipynb_checkpoints/
 
+# pyenv
+.python-version
+
 # DS Store
 .DS_Store
