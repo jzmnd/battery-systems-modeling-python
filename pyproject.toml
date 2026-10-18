@@ -1,8 +1,13 @@
 [project]
 name = "battery-systems-modeling-python"
 version = "0.1.0"
-description = "Battery Systems Modeling"
+description = "Battery Systems Modeling in Python"
+authors = [
+  { name = "Jez Smith", email = "j.smith.03@cantab.net" }
+]
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.4.6",
@@ -11,5 +16,16 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pytest>=9.1.1",
     "ruff>=0.15.20",
 ]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "battery_systems_modeling"
+
+[tool.ruff]
+line-length = 100
