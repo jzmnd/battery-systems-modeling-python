@@ -13,6 +13,7 @@ Where:
     Rs is the cell internal resistance
     ∆vt(t) is the voltage across the SEI layer
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,13 +21,14 @@ import logging
 import numpy as np
 from scipy import optimize
 
-from cell_model import CellParameters, OCVLookupTable, CellModel
+from battery_systems_modeling.cell_model import CellModel
+from battery_systems_modeling.parameters import CellParameters
+from battery_systems_modeling.lookup_tables import OCVLookupTable
 
 LOGGER = logging.getLogger(__name__)
 
 
 class CellModelInverter:
-
     """Performs inversion of the CellModel by solving for ib(t) given a target power"""
 
     time_init_lookback: float = 1.0
@@ -76,7 +78,7 @@ class CellModelInverter:
             result = optimize.minimize(
                 self._error,
                 x0=self._ib_soln[-1],
-                args=(self._ib_soln, self._power_soln[:i+1], self._time_soln[:i+1]),
+                args=(self._ib_soln, self._power_soln[: i + 1], self._time_soln[: i + 1]),
             )
             self._ib_soln = np.append(self._ib_soln, result.x[0])
 

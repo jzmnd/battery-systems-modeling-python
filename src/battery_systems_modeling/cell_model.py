@@ -13,60 +13,22 @@ Where:
     Rs is the cell internal resistance
     ∆vt(t) is the voltage across the SEI layer
 """
+
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 from scipy import interpolate, integrate
 
+from battery_systems_modeling.parameters import CellParameters
+from battery_systems_modeling.lookup_tables import OCVLookupTable
+
 LOGGER = logging.getLogger(__name__)
-
-
-@dataclass
-class CellParameters:
-
-    """Defines the Cell Parameters."""
-
-    Q: float  # Cell capacity (Ah)
-    Ct: float  # Double layer capacitance (F)
-    Rt: float  # SEI layer charge transfer resistance (Ohms)
-    Rs: float  # Cell internal resistance (Ohms)
-    Rd: float  # Self-discharge resistance  (Ohms)
-
-
-@dataclass
-class OCVLookupTable:
-
-    """Open circuit voltage (Voc) lookup table. Interpolates the Voc vs SOC function."""
-
-    Voc: np.array  # Open circuit voltages (V)
-    soc: np.array  # SOCs (0,1)
-
-    def __post_init__(self) -> None:
-        """Initialize Voc_int."""
-        self.Voc_int: Optional[np.array] = None
-
-    def is_interpolated(self) -> bool:
-        """Tests if the lookup table has already been interpolated."""
-        return self.Voc_int is not None
-
-    def interpolate(self) -> None:
-        """Interpolate the Voc(SOC) function."""
-        self.Voc_int = interpolate.interp1d(
-            self.soc, self.Voc, kind="cubic", fill_value="extrapolate"
-        )
-        self.integrate = np.vectorize(self._integrate)
-
-    def _integrate(self, soc: float) -> float:
-        """Calculate the integral of Voc(SOC) between 0 and a given SOC."""
-        return integrate.quad(self.Voc_int, 0, soc)[0]
+DEFAULT_SOLVER = "DOP853"
 
 
 class CellModel:
-
     """Cell Model Definition."""
 
     seconds_in_hour: int = 3600
@@ -88,8 +50,8 @@ class CellModel:
         if not self.ocv_lu_table.is_interpolated():
             self.ocv_lu_table.interpolate()
         self._interpolate_ib()
-        self.sol: Optional[integrate.OdeResult] = None
-        self.Vb: Optional[np.array] = None
+        self.sol: integrate.OdeResult | None = None
+        self.Vb: np.array | None = None
 
     def _interpolate_ib(self) -> None:
         """Interpolate the ib(t) function."""
@@ -136,7 +98,7 @@ class CellModel:
         """Cell output power."""
         return self.ib * self.Vb
 
-    def solve(self, method: str = "DOP853") -> CellModel:
+    def solve(self, method: str = DEFAULT_SOLVER) -> CellModel:
         """Solve for the cell voltage."""
         W0 = np.array([self.soc0, 0])
         trange = (self.time[0], self.time[-1])
