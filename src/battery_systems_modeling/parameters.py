@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
+R_GAS: float = 8.31446261815324
+
 
 @dataclass
 class CellParameters:
@@ -17,6 +21,10 @@ class CellParameters:
     Ea_s: float = 0.0  # Arrhenius rate for the temperature dependence of Rs (J/mol)
 
     thermal: ThermalParameters | None = None
+
+    def Rs_at(self, T: float) -> float:
+        """Cell internal resistance (Ohms) at an arbitrary temperature T (K)."""
+        return self.Rs * np.exp((self.Ea_s / R_GAS) * (1 / T - 1 / self.T_ref))
 
 
 @dataclass
