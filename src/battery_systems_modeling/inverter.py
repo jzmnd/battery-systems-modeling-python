@@ -4,13 +4,13 @@ Reference:
 C. D. Rahn and C.Y. Wang, Battery Systems Engineering. Oxford, UK: John Wiley & Sons Ltd, 2013
 
 Model:
-    Vb = Voc(SOC(t)) + ib(t) * Rs + ∆vt(t)
+    Vb = Voc(SOC(t)) + ib(t) * Rs(T) + ∆vt(t)
 
 Where:
     Vb is the cell voltage
     Voc is the open circuit voltage which is a function of SOC dependent on cell chemistry
-    ib(t) is the cell current
-    Rs is the cell internal resistance
+    ib(t) is the cell current (positive when charging)
+    Rs(T) is the cell internal resistance, which depends on the cell temperature T
     ∆vt(t) is the voltage across the SEI layer
 """
 
@@ -22,16 +22,19 @@ import numpy as np
 from scipy import optimize
 
 from battery_systems_modeling.cell_model import CellModel
-from battery_systems_modeling.parameters import CellParameters
-from battery_systems_modeling.lookup_tables import OCVLookupTable
+from battery_systems_modeling.parameters import CellLimits, CellParameters
+from battery_systems_modeling.lookup_tables import OCVLookupTable, dOCVdTLookupTable
 
 LOGGER = logging.getLogger(__name__)
+ROOT_GUESS_OFFSET = 1e-3  # Offset (A) between the two initial guesses of the secant root finder
 
 
 class CellModelInverter:
-    """Performs inversion of the CellModel by solving for ib(t) given a target power"""
+    """Performs inversion of the CellModel by solving for ib(t) given a target power.
 
-    time_init_lookback: float = 1.0
+    The arguments other than `power` are the same as for `CellModel`. Cell limits are not applied
+    while solving for ib(t) but are applied to the returned `CellModel`.
+    """
 
     def __init__(
         self,
@@ -40,6 +43,10 @@ class CellModelInverter:
         soc0: float,
         cell_params: CellParameters,
         ocv_lu_table: OCVLookupTable,
+        T0: float | None = None,
+        T_amb: float | np.array | None = None,
+        docv_dT_lu_table: dOCVdTLookupTable | None = None,
+        limits: CellLimits | None = None,
     ) -> None:
         """Initialize cell model inverter."""
         self.power = power
@@ -47,43 +54,85 @@ class CellModelInverter:
         self.soc0 = soc0
         self.cell_params = cell_params
         self.ocv_lu_table = ocv_lu_table
+        self.T0 = T0
+        self.T_amb = None if T_amb is None else np.broadcast_to(T_amb, np.shape(time))
+        self.docv_dT_lu_table = docv_dT_lu_table
+        self.limits = limits
+
         if not self.ocv_lu_table.is_interpolated():
             self.ocv_lu_table.interpolate()
 
-    def _error(self, ib_new: float, ib_prev: np.array, power: np.array, time: np.array) -> float:
-        """Returns the SSE for the difference between model power and set power."""
-        ib = np.append(ib_prev, ib_new)
-        model = CellModel(ib, time, self.soc0, self.cell_params, self.ocv_lu_table).solve()
-        return sum((model.cell_power - power) ** 2)
+    def _build_model(self, ib: np.array, time: np.array, **kwargs) -> CellModel:
+        """Build a `CellModel` for the given current and time series."""
+        return CellModel(
+            ib,
+            time,
+            kwargs.pop("soc0", self.soc0),
+            self.cell_params,
+            self.ocv_lu_table,
+            docv_dT_lu_table=self.docv_dT_lu_table,
+            **kwargs,
+        )
 
-    def _init_solution_vars(self) -> None:
-        """Initialize the solution variables. We initialize ib with a value of 0.
-        The time series is initialized with a value of `time_init_lookback` before the first time
-        which is then prepended to `time`.
-        The power series is initialized with a value equal to the first value which is then
-        prepended to `power`.
+    def _initial_state(self) -> np.array:
+        """Cell state W at the first time step."""
+        W0 = [self.soc0, 0.0]
+        if self.cell_params.thermal is not None:
+            W0.append(self.T0)
+        return np.array(W0)
+
+    def _initial_voltage(self, ib: float, W: np.array) -> float:
+        """Cell voltage at the first time step, where there is no time to integrate over."""
+        T = W[2] if self.cell_params.thermal is not None else self.cell_params.T_ref
+        return self.ocv_lu_table.Voc_int(W[0]) + ib * self.cell_params.Rs_at(T) + W[1]
+
+    def _step(self, k: int, ib_prev: float, ib_new: float, W_prev: np.array) -> tuple:
+        """Integrate from time step k-1 to k with ib(t) linear between `ib_prev` and `ib_new`.
+        Returns the cell state W and the cell voltage Vb at time step k.
         """
-        self._ib_soln = np.array([0])
-        self._time_soln = np.append(self.time[0] - self.time_init_lookback, self.time)
-        self._power_soln = np.append(self.power[0], self.power)
+        if k == 0:
+            return W_prev, self._initial_voltage(ib_new, W_prev)
+
+        model = self._build_model(
+            np.array([ib_prev, ib_new]),
+            self.time[k - 1 : k + 1],
+            soc0=W_prev[0],
+            dvt0=W_prev[1],
+            T0=W_prev[2] if self.cell_params.thermal is not None else None,
+            T_amb=None if self.T_amb is None else self.T_amb[k - 1 : k + 1],
+        ).solve()
+
+        return model.state[:, -1], model.Vb[-1]
+
+    def _solve_step(self, k: int, ib_prev: float, W_prev: np.array) -> tuple[float, np.array]:
+        """Solve for ib at time step k such that the cell power equals the target power.
+        Returns ib and the cell state W at time step k.
+        """
+
+        def power_error(ib_new: float) -> float:
+            return ib_new * self._step(k, ib_prev, ib_new, W_prev)[1] - self.power[k]
+
+        root = optimize.root_scalar(
+            power_error, x0=ib_prev, x1=ib_prev + ROOT_GUESS_OFFSET, method="secant"
+        )
+        if not root.converged:
+            raise ValueError(
+                f"No cell current found for target power {self.power[k]} W at t={self.time[k]} s"
+            )
+
+        return root.root, self._step(k, ib_prev, root.root, W_prev)[0]
 
     def solve(self) -> CellModel:
-        """Iteratively solve the plant inversion problem. For each time step we minimize the error
-        between set power and cell model power for the new value of ib(t). We then save that
-        value of ib(t) and use it in the next time step t+1 to to find ib(t+1).
+        """Iteratively solve the plant inversion problem. For each time step we find the value of
+        ib(t) for which the cell model power equals the target power, starting from the cell state
+        at the previous time step. The resulting ib(t) is then used to solve the `CellModel`.
         """
-        self._init_solution_vars()
+        ib = np.zeros(len(self.time))
+        W = self._initial_state()
 
-        for i in range(1, len(self._time_soln)):
-            result = optimize.minimize(
-                self._error,
-                x0=self._ib_soln[-1],
-                args=(self._ib_soln, self._power_soln[: i + 1], self._time_soln[: i + 1]),
-            )
-            self._ib_soln = np.append(self._ib_soln, result.x[0])
+        for k in range(len(self.time)):
+            ib[k], W = self._solve_step(k, ib[k - 1] if k else 0.0, W)
 
-        self._ib_soln = self._ib_soln[1:]
-
-        return CellModel(
-            self._ib_soln, self.time, self.soc0, self.cell_params, self.ocv_lu_table
+        return self._build_model(
+            ib, self.time, T0=self.T0, T_amb=self.T_amb, limits=self.limits
         ).solve()
