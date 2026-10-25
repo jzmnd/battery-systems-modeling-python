@@ -39,8 +39,8 @@ class ThermalParameters:
 class CellLimits:
     """Defines the Cell limits."""
 
-    Vb_min: float  # Minimum cell voltage (V)
-    Vb_max: float  # Maximum cell voltage (V)
+    Vb_min: float = 0.0  # Minimum cell voltage (V)
+    Vb_max: float = 15.0  # Maximum cell voltage (V)
 
     soc_min: float = 0.0  # Minimum cell SOC
     soc_max: float = 1.0  # Maximum cell SOC
